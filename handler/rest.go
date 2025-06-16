@@ -2,6 +2,9 @@ package handler
 
 import (
 	"database/sql"
+	"encoding/json"
+	"errors"
+	"io"
 	"log"
 	"main/database"
 	"net/http"
@@ -12,6 +15,13 @@ import (
 // RestHandler структура для обработчика запросов
 type RestHandler struct {
 	DataBase *sql.DB
+}
+
+// PostBody тело входящего POST и PATCH запроса
+type PostBody struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Priority    int    `json:"newPriority"`
 }
 
 // NewRestHandler получаем новый обработчик запросов
@@ -48,6 +58,175 @@ func (rh RestHandler) GetHandler(w http.ResponseWriter, r *http.Request) {
 
 // PostHandler обрабочик post-запроса
 func (rh RestHandler) PostHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	spID := r.URL.Query().Get("projectId")
+	if spID == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("projectId not provided"))
+		return
+	}
+	pID, err := strconv.Atoi(spID)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(err.Error()))
+		log.Print(err)
+		return
+	}
+
+	jsonBody, err := readBody(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(err.Error()))
+		log.Print(err)
+		return
+	}
+
+	if jsonBody.Name == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("name not provided"))
+		log.Print("name not provided")
+		return
+	}
+
+	payload, err := database.InsertGood(rh.DataBase, pID, jsonBody.Name)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(err.Error()))
+		log.Print(err)
+		return
+	}
+	w.WriteHeader(200)
+	w.Write(payload)
+}
+
+// DeleteHandler обрабочик delete-запроса
+func (rh RestHandler) DeleteHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	values := r.URL.Query()
+	ID, pID, err := getIDAndProjectID(values.Get("id"), values.Get("projectId"))
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(err.Error()))
+		log.Print(err)
+		return
+	}
+
+	payload, err := database.DeleteGood(rh.DataBase, ID, pID)
+	if err != nil {
+		if errors.Is(err, database.ErrNotFound) {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write(payload)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(err.Error()))
+		log.Print(err)
+		return
+	}
+	w.WriteHeader(200)
+	w.Write(payload)
+}
+
+// UpdateHandler обрабочик Update-запроса
+func (rh RestHandler) UpdateHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	values := r.URL.Query()
+	ID, pID, err := getIDAndProjectID(values.Get("id"), values.Get("projectId"))
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(err.Error()))
+		log.Print(err)
+		return
+	}
+
+	jsonBody, err := readBody(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(err.Error()))
+		log.Print(err)
+		return
+	}
+
+	if jsonBody.Name == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("name not provided"))
+		log.Print("name not provided")
+		return
+	}
+
+	payload, err := database.UpdateGood(rh.DataBase, ID, pID, jsonBody.Name, jsonBody.Description)
+	if err != nil {
+		if errors.Is(err, database.ErrNotFound) {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write(payload)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(err.Error()))
+		log.Print(err)
+		return
+	}
+	w.WriteHeader(200)
+	w.Write(payload)
+}
+
+// ReprioritiizeHandler обрабочик Repreoritiize-запроса
+func (rh RestHandler) ReprioritiizeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	values := r.URL.Query()
+	ID, pID, err := getIDAndProjectID(values.Get("id"), values.Get("projectId"))
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(err.Error()))
+		log.Print(err)
+		return
+	}
+
+	jsonBody, err := readBody(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(err.Error()))
+		log.Print(err)
+		return
+	}
+
+	if jsonBody.Priority == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("newPriority not provided"))
+		log.Print("newPriority not provided")
+		return
+	}
+
+	payload, err := database.ReprioritiizeGood(rh.DataBase, ID, pID, jsonBody.Priority)
+	if err != nil {
+		if errors.Is(err, database.ErrNotFound) {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write(payload)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(err.Error()))
+		log.Print(err)
+		return
+	}
+	w.WriteHeader(200)
+	w.Write(payload)
 }
 
 // getLimitAndOffset получаем лимит и отступ для sql
@@ -70,4 +249,38 @@ func getLimitAndOffset(params url.Values) (limit, offset int, err error) {
 		return 0, 0, err
 	}
 	return limit, offset, err
+}
+
+// getIDAndProjectID получаем id и projectId
+func getIDAndProjectID(sID, spID string) (ID, pID int, err error) {
+	if sID == "" {
+		err = errors.New("id not provided")
+		return
+	}
+	if spID == "" {
+		err = errors.New("projectId not provided")
+		return
+	}
+	pID, err = strconv.Atoi(spID)
+	if err != nil {
+		return
+	}
+	ID, err = strconv.Atoi(sID)
+	if err != nil {
+		return
+	}
+	return
+}
+
+// readBody читаем тело запроса
+func readBody(in io.ReadCloser) (jsonBody PostBody, err error) {
+	body, err := io.ReadAll(in)
+	if err != nil {
+		return
+	}
+	err = json.Unmarshal(body, &jsonBody)
+	if err != nil {
+		return
+	}
+	return
 }

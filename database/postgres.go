@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -16,6 +17,36 @@ type PostgresConfig struct {
 	User     string `yaml:"user"`
 	Password string `yaml:"password"`
 	DBName   string `yaml:"dbname"`
+}
+
+// GoodsResponse структура ответа для get-запроса
+type GoodsResponse struct {
+	Meta  Meta   `json:"meta"`
+	Goods []Good `json:"goods"`
+}
+
+// Meta метаданные для ответа
+type Meta struct {
+	Total   int `json:"total"`
+	Removed int `json:"removed"`
+	Limit   int `json:"limit"`
+	Offset  int `json:"offset"`
+}
+
+// Good структура товара
+type Good struct {
+	ID          int        `json:"id"`
+	ProjectID   int        `json:"projectId,omitempty"`
+	Name        string     `json:"name,omitempty"`
+	Description *string    `json:"description,omitempty"`
+	Priority    int        `json:"priority,omitempty"`
+	Removed     bool       `json:"removed,omitempty"`
+	CreatedAt   *time.Time `json:"createdAt,omitempty"`
+}
+
+// ReprioritiizeResponse структура ответа для изменения приоритета
+type ReprioritiizeResponse struct {
+	Priorities []Good `json:"priorities"`
 }
 
 // GetDatabase получаем коннекшн с базой
@@ -85,27 +116,190 @@ func FindGoods(db *sql.DB, limit, offset int) (payload json.RawMessage, err erro
 	return out, nil
 }
 
-// GoodsResponse структура ответа для get-запроса
-type GoodsResponse struct {
-	Meta  Meta   `json:"meta"`
-	Goods []Good `json:"goods"`
+// InsertGood добавляем товар
+func InsertGood(db *sql.DB, pID int, name string) (payload json.RawMessage, err error) {
+	row := db.QueryRow("insert into test_issue.goods (project_id, name) values($1, $2) returning *", pID, name)
+	good := Good{}
+	err = row.Scan(&good.ID, &good.ProjectID, &good.Name, &good.Description, &good.Priority, &good.Removed, &good.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	out, err := json.Marshal(good)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
-// Meta метаданные для ответа
-type Meta struct {
-	Total   int `json:"total"`
-	Removed int `json:"removed"`
-	Limit   int `json:"limit"`
-	Offset  int `json:"offset"`
+// DeleteGood помечаем товар удаленным
+func DeleteGood(db *sql.DB, ID, pID int) (payload json.RawMessage, err error) {
+	res, err := db.Exec("update test_issue.goods set removed = true where id = $1 and project_id = $2", ID, pID)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if rows == 0 {
+		return []byte(notFoundMessage), ErrNotFound
+	}
+
+	out, err := json.Marshal(Good{
+		ID:        ID,
+		ProjectID: pID,
+		Removed:   true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
-// Good структура товара
-type Good struct {
-	ID          int       `json:"id"`
-	ProjectID   int       `json:"projectId"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Priority    int       `json:"priority"`
-	Removed     bool      `json:"removed"`
-	CreatedAt   time.Time `json:"createdAt"`
+// UpdateGood обновляем товар
+func UpdateGood(db *sql.DB, ID, pID int, name, description string) (payload json.RawMessage, err error) {
+	desc := ""
+	if description != "" {
+		desc = ", description = $4"
+	}
+	statement := fmt.Sprintf("UPDATE test_issue.goods SET name = $3 %s WHERE id = $1 and project_id = $2 returning *;", desc)
+
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	stmt, err := tx.Prepare(`SELECT * FROM test_issue.goods WHERE id = $1 and project_id = $2 FOR UPDATE;`)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	res, err := stmt.Exec(ID, pID)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	rows, err := res.RowsAffected()
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if rows == 0 {
+		tx.Rollback()
+		return []byte(notFoundMessage), ErrNotFound
+	}
+
+	stmt, err = tx.Prepare(statement)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	updated := stmt.QueryRow(ID, pID, name, description)
+	good := Good{}
+	err = updated.Scan(&good.ID, &good.ProjectID, &good.Name, &good.Description, &good.Priority, &good.Removed, &good.CreatedAt)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return nil, err
+	}
+
+	out, err := json.Marshal(good)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
+
+// ReprioritiizeGood меняем приоритет у товара
+func ReprioritiizeGood(db *sql.DB, ID, pID, priority int) (payload json.RawMessage, err error) {
+	goods := []Good{}
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	// в два подхода блокируем нужные записи в таблице
+	stmt, err := tx.Prepare(`SELECT * FROM test_issue.goods WHERE id = $1 and project_id = $2 FOR UPDATE;`)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	res, err := stmt.Exec(ID, pID)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	rowsA, err := res.RowsAffected()
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if rowsA == 0 {
+		tx.Rollback()
+		return []byte(notFoundMessage), ErrNotFound
+	}
+	stmt, err = tx.Prepare(`SELECT * FROM test_issue.goods WHERE priority >= $1 FOR UPDATE;`)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	_, err = stmt.Exec(priority)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	stmt, err = tx.Prepare(`UPDATE test_issue.goods SET priority = priority+1 WHERE priority >= $1 returning id, priority;`)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	rows, err := stmt.Query(priority)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	for rows.Next() {
+		good := Good{}
+		err = rows.Scan(&good.ID, &good.Priority)
+		if err != nil {
+			return nil, err
+		}
+		goods = append(goods, good)
+	}
+
+	stmt, err = tx.Prepare(`UPDATE test_issue.goods SET priority = $3 WHERE id = $1 and project_id = $2 returning id, priority;`)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	row := stmt.QueryRow(ID, pID, priority)
+	good := Good{}
+	err = row.Scan(&good.ID, &good.Priority)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	goods = append(goods, good)
+	err = tx.Commit()
+	if err != nil {
+		return nil, err
+	}
+
+	out, err := json.Marshal(ReprioritiizeResponse{Priorities: goods})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// notFoundMessage сообщение если товар не найден
+var notFoundMessage = `"code": 3 "message": "errors.common.notFound" "details": {}`
+
+// ErrNotFound сообщение если товар не найден
+var ErrNotFound = errors.New("good not found")
