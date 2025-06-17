@@ -1,8 +1,9 @@
-#version: "3"
+version: "3.8"
 
 services:
   postgres:
     image: postgres:13.3
+    container_name: postgres.local
     environment:
       POSTGRES_DB: "testissue"
       POSTGRES_USER: "sample"
@@ -11,3 +12,17 @@ services:
       - ./init_db:/docker-entrypoint-initdb.d
     ports:
       - "5432:5432"
+  redis:
+    image: redis:latest
+    container_name: redis.local
+    environment:
+      - REDIS_MASTER_PASSWORD=test
+      - REDIS_PASSWORD=test
+    ports: 
+      - "6379:6379"
+  web:
+    build: .
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres

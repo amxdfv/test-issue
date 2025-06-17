@@ -1,6 +1,10 @@
 postgres:
-  host: localhost
+  host: "localhost" #  "postgres.local"
   port: "5432"
   user: sample
   password: sample
   dbname: testissue
+redis:
+  address: "localhost:6379" # "redis.local:6379"
+  user: default
+  password: default

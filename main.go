@@ -19,8 +19,13 @@ func main() {
 		log.Fatal(err)
 		return
 	}
+	rdb, err := database.GetRedisClient(cfg.Redis)
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
 
-	r := handler.NewRestHandler(db)
+	r := handler.NewRestHandler(db, rdb)
 	http.HandleFunc("/good", r.GetHandler)
 	http.HandleFunc("/good/create", r.PostHandler)
 	http.HandleFunc("/good/remove", r.DeleteHandler)

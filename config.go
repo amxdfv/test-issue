@@ -10,6 +10,7 @@ import (
 // Config структура для конфига
 type Config struct {
 	Postgres database.PostgresConfig `yaml:"postgres"`
+	Redis    database.RedisConfig    `yaml:"redis"`
 }
 
 // loadConfig читаем конфиг

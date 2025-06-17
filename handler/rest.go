@@ -10,11 +10,14 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // RestHandler структура для обработчика запросов
 type RestHandler struct {
 	DataBase *sql.DB
+	Redis    *redis.Client
 }
 
 // PostBody тело входящего POST и PATCH запроса
@@ -25,9 +28,10 @@ type PostBody struct {
 }
 
 // NewRestHandler получаем новый обработчик запросов
-func NewRestHandler(db *sql.DB) RestHandler {
+func NewRestHandler(db *sql.DB, rdb *redis.Client) RestHandler {
 	return RestHandler{
 		DataBase: db,
+		Redis:    rdb,
 	}
 }
 
@@ -45,13 +49,28 @@ func (rh RestHandler) GetHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload, err := database.FindGoods(rh.DataBase, limit, offset)
+	payload, err := database.FindInCache(rh.Redis, limit, offset)
+	if payload != nil {
+		w.WriteHeader(200)
+		w.Write(payload)
+		return
+	} else {
+		log.Print(err) // продолжаем
+	}
+
+	payload, err = database.FindGoods(rh.DataBase, limit, offset)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(err.Error()))
 		log.Print(err)
 		return
 	}
+	// пишем кеш
+	err = database.PutInCache(rh.Redis, payload, limit, offset)
+	if err != nil {
+		log.Print(err)
+	}
+
 	w.WriteHeader(200)
 	w.Write(payload)
 }
@@ -99,6 +118,10 @@ func (rh RestHandler) PostHandler(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 		return
 	}
+	err = database.InvalidateCache(rh.Redis)
+	if err != nil {
+		log.Print(err)
+	}
 	w.WriteHeader(200)
 	w.Write(payload)
 }
@@ -130,6 +153,10 @@ func (rh RestHandler) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(err.Error()))
 		log.Print(err)
 		return
+	}
+	err = database.InvalidateCache(rh.Redis)
+	if err != nil {
+		log.Print(err)
 	}
 	w.WriteHeader(200)
 	w.Write(payload)
@@ -178,6 +205,10 @@ func (rh RestHandler) UpdateHandler(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 		return
 	}
+	err = database.InvalidateCache(rh.Redis)
+	if err != nil {
+		log.Print(err)
+	}
 	w.WriteHeader(200)
 	w.Write(payload)
 }
@@ -224,6 +255,10 @@ func (rh RestHandler) ReprioritiizeHandler(w http.ResponseWriter, r *http.Reques
 		w.Write([]byte(err.Error()))
 		log.Print(err)
 		return
+	}
+	err = database.InvalidateCache(rh.Redis)
+	if err != nil {
+		log.Print(err)
 	}
 	w.WriteHeader(200)
 	w.Write(payload)
