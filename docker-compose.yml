@@ -20,9 +20,27 @@ services:
       - REDIS_PASSWORD=test
     ports: 
       - "6379:6379"
+  clickhouse:  
+    image: clickhouse/clickhouse-server:24.8.4  
+    container_name: clickhouse.local
+    volumes:
+      - ./init_clickhouse:/docker-entrypoint-initdb.d
+    ports:  
+      - "8123:8123"  
+    environment:  
+      CLICKHOUSE_USER: click  
+      CLICKHOUSE_PASSWORD: click
+  nats:
+    image: nats:alpine
+    container_name: nats.local
+    ports:
+      - 4222:4222
   web:
     build: .
     ports:
       - "8080:8080"
     depends_on:
       - postgres
+      - nats
+      - clickhouse
+      - redis

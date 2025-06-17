@@ -7,10 +7,12 @@ import (
 	"io"
 	"log"
 	"main/database"
+	natsLog "main/nats"
 	"net/http"
 	"net/url"
 	"strconv"
 
+	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -18,6 +20,7 @@ import (
 type RestHandler struct {
 	DataBase *sql.DB
 	Redis    *redis.Client
+	Nats     *nats.Conn
 }
 
 // PostBody тело входящего POST и PATCH запроса
@@ -28,10 +31,11 @@ type PostBody struct {
 }
 
 // NewRestHandler получаем новый обработчик запросов
-func NewRestHandler(db *sql.DB, rdb *redis.Client) RestHandler {
+func NewRestHandler(db *sql.DB, rdb *redis.Client, nc *nats.Conn) RestHandler {
 	return RestHandler{
 		DataBase: db,
 		Redis:    rdb,
+		Nats:     nc,
 	}
 }
 
@@ -111,7 +115,7 @@ func (rh RestHandler) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload, err := database.InsertGood(rh.DataBase, pID, jsonBody.Name)
+	payload, logPayload, err := database.InsertGood(rh.DataBase, pID, jsonBody.Name)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(err.Error()))
@@ -119,6 +123,10 @@ func (rh RestHandler) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = database.InvalidateCache(rh.Redis)
+	if err != nil {
+		log.Print(err)
+	}
+	err = natsLog.SendLog(rh.Nats, logPayload)
 	if err != nil {
 		log.Print(err)
 	}
@@ -142,7 +150,7 @@ func (rh RestHandler) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload, err := database.DeleteGood(rh.DataBase, ID, pID)
+	payload, logPayload, err := database.DeleteGood(rh.DataBase, ID, pID)
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			w.WriteHeader(http.StatusNotFound)
@@ -155,6 +163,10 @@ func (rh RestHandler) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = database.InvalidateCache(rh.Redis)
+	if err != nil {
+		log.Print(err)
+	}
+	err = natsLog.SendLog(rh.Nats, logPayload)
 	if err != nil {
 		log.Print(err)
 	}
@@ -193,7 +205,7 @@ func (rh RestHandler) UpdateHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload, err := database.UpdateGood(rh.DataBase, ID, pID, jsonBody.Name, jsonBody.Description)
+	payload, logPayload, err := database.UpdateGood(rh.DataBase, ID, pID, jsonBody.Name, jsonBody.Description)
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			w.WriteHeader(http.StatusNotFound)
@@ -206,6 +218,10 @@ func (rh RestHandler) UpdateHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = database.InvalidateCache(rh.Redis)
+	if err != nil {
+		log.Print(err)
+	}
+	err = natsLog.SendLog(rh.Nats, logPayload)
 	if err != nil {
 		log.Print(err)
 	}
@@ -244,7 +260,7 @@ func (rh RestHandler) ReprioritiizeHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	payload, err := database.ReprioritiizeGood(rh.DataBase, ID, pID, jsonBody.Priority)
+	payload, logPayload, err := database.ReprioritiizeGood(rh.DataBase, ID, pID, jsonBody.Priority)
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			w.WriteHeader(http.StatusNotFound)
@@ -259,6 +275,19 @@ func (rh RestHandler) ReprioritiizeHandler(w http.ResponseWriter, r *http.Reques
 	err = database.InvalidateCache(rh.Redis)
 	if err != nil {
 		log.Print(err)
+	}
+
+	// пишем в лог
+	for _, msg := range logPayload {
+		out, err := json.Marshal(msg)
+		if err != nil {
+			log.Print(err)
+			continue
+		}
+		err = natsLog.SendLog(rh.Nats, out)
+		if err != nil {
+			log.Print(err)
+		}
 	}
 	w.WriteHeader(200)
 	w.Write(payload)

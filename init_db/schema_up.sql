@@ -31,3 +31,5 @@ removed bool DEFAULT false,
 created_at timestamp DEFAULT now(),
 CONSTRAINT goods_pk PRIMARY KEY(id,project_id)
 );
+
+INSERT INTO  test_issue.projects (id, name, created_at) values(1,'Первая запись',now());

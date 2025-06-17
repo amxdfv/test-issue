@@ -2,6 +2,7 @@ package main
 
 import (
 	"main/database"
+	natsLog "main/nats"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -11,6 +12,7 @@ import (
 type Config struct {
 	Postgres database.PostgresConfig `yaml:"postgres"`
 	Redis    database.RedisConfig    `yaml:"redis"`
+	Nats     natsLog.NatsConfig      `yaml:"nats"`
 }
 
 // loadConfig читаем конфиг

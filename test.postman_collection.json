@@ -1,0 +1,182 @@
+{
+	"info": {
+		"_postman_id": "591474e2-a4f5-4dec-8844-588283b4067f",
+		"name": "test",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "29413260"
+	},
+	"item": [
+		{
+			"name": "New Request",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "localhost:8080/good?limit=10&offset=0",
+					"host": [
+						"localhost"
+					],
+					"port": "8080",
+					"path": [
+						"good"
+					],
+					"query": [
+						{
+							"key": "limit",
+							"value": "10"
+						},
+						{
+							"key": "offset",
+							"value": "0"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "New Request",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"name\": \"oslic\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "localhost:8080/good/create?projectId=99",
+					"host": [
+						"localhost"
+					],
+					"port": "8080",
+					"path": [
+						"good",
+						"create"
+					],
+					"query": [
+						{
+							"key": "projectId",
+							"value": "99"
+						},
+						{
+							"key": "offset",
+							"value": "0",
+							"disabled": true
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "New Request",
+			"request": {
+				"method": "DELETE",
+				"header": [],
+				"url": {
+					"raw": "localhost:8080/good/remove?projectId=1&id=1",
+					"host": [
+						"localhost"
+					],
+					"port": "8080",
+					"path": [
+						"good",
+						"remove"
+					],
+					"query": [
+						{
+							"key": "projectId",
+							"value": "1"
+						},
+						{
+							"key": "id",
+							"value": "1"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "New Request",
+			"request": {
+				"method": "PATCH",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"name\": \"oslic1\",\r\n    \"description\": \"paykan\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "localhost:8080/good/update?projectId=1&id=1",
+					"host": [
+						"localhost"
+					],
+					"port": "8080",
+					"path": [
+						"good",
+						"update"
+					],
+					"query": [
+						{
+							"key": "projectId",
+							"value": "1"
+						},
+						{
+							"key": "id",
+							"value": "1"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "New Request",
+			"request": {
+				"method": "PATCH",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "localhost:8080/good/reprioritiize?projectId=1&id=3",
+					"host": [
+						"localhost"
+					],
+					"port": "8080",
+					"path": [
+						"good",
+						"reprioritiize"
+					],
+					"query": [
+						{
+							"key": "projectId",
+							"value": "1"
+						},
+						{
+							"key": "id",
+							"value": "3"
+						}
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	natsLog "main/nats"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -117,49 +118,70 @@ func FindGoods(db *sql.DB, limit, offset int) (payload json.RawMessage, err erro
 }
 
 // InsertGood добавляем товар
-func InsertGood(db *sql.DB, pID int, name string) (payload json.RawMessage, err error) {
+func InsertGood(db *sql.DB, pID int, name string) (payload, logPayload json.RawMessage, err error) {
 	row := db.QueryRow("insert into test_issue.goods (project_id, name) values($1, $2) returning *", pID, name)
 	good := Good{}
 	err = row.Scan(&good.ID, &good.ProjectID, &good.Name, &good.Description, &good.Priority, &good.Removed, &good.CreatedAt)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	out, err := json.Marshal(good)
+	payload, err = json.Marshal(good)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return out, nil
+	logPayload, err = json.Marshal(natsLog.LogMessage{
+		ID:          good.ID,
+		ProjectID:   pID,
+		Name:        good.Name,
+		Description: good.Description,
+		Priority:    good.Priority,
+		Removed:     good.Removed,
+		EventTime:   time.Now(),
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return payload, logPayload, nil
 }
 
 // DeleteGood помечаем товар удаленным
-func DeleteGood(db *sql.DB, ID, pID int) (payload json.RawMessage, err error) {
+func DeleteGood(db *sql.DB, ID, pID int) (payload, logPayload json.RawMessage, err error) {
 	res, err := db.Exec("update test_issue.goods set removed = true where id = $1 and project_id = $2", ID, pID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	rows, err := res.RowsAffected()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if rows == 0 {
-		return []byte(notFoundMessage), ErrNotFound
+		return []byte(notFoundMessage), nil, ErrNotFound
 	}
 
-	out, err := json.Marshal(Good{
+	payload, err = json.Marshal(Good{
 		ID:        ID,
 		ProjectID: pID,
 		Removed:   true,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return out, nil
+	logPayload, err = json.Marshal(natsLog.LogMessage{
+		ID:        ID,
+		ProjectID: pID,
+		Removed:   true,
+		EventTime: time.Now(),
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return payload, logPayload, nil
 }
 
 // UpdateGood обновляем товар
-func UpdateGood(db *sql.DB, ID, pID int, name, description string) (payload json.RawMessage, err error) {
+func UpdateGood(db *sql.DB, ID, pID int, name, description string) (payload, logPayload json.RawMessage, err error) {
 	desc := ""
 	if description != "" {
 		desc = ", description = $4"
@@ -168,107 +190,119 @@ func UpdateGood(db *sql.DB, ID, pID int, name, description string) (payload json
 
 	tx, err := db.Begin()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	stmt, err := tx.Prepare(`SELECT * FROM test_issue.goods WHERE id = $1 and project_id = $2 FOR UPDATE;`)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, nil, err
 	}
 	res, err := stmt.Exec(ID, pID)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, nil, err
 	}
 
 	rows, err := res.RowsAffected()
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, nil, err
 	}
 	if rows == 0 {
 		tx.Rollback()
-		return []byte(notFoundMessage), ErrNotFound
+		return []byte(notFoundMessage), nil, ErrNotFound
 	}
 
 	stmt, err = tx.Prepare(statement)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, nil, err
 	}
 	updated := stmt.QueryRow(ID, pID, name, description)
 	good := Good{}
 	err = updated.Scan(&good.ID, &good.ProjectID, &good.Name, &good.Description, &good.Priority, &good.Removed, &good.CreatedAt)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, nil, err
 	}
 
 	err = tx.Commit()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	out, err := json.Marshal(good)
+	payload, err = json.Marshal(good)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return out, nil
+	logPayload, err = json.Marshal(natsLog.LogMessage{
+		ID:          good.ID,
+		ProjectID:   pID,
+		Name:        good.Name,
+		Description: good.Description,
+		Priority:    good.Priority,
+		Removed:     good.Removed,
+		EventTime:   time.Now(),
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return payload, logPayload, nil
 }
 
 // ReprioritiizeGood меняем приоритет у товара
-func ReprioritiizeGood(db *sql.DB, ID, pID, priority int) (payload json.RawMessage, err error) {
+func ReprioritiizeGood(db *sql.DB, ID, pID, priority int) (payload json.RawMessage, logPayload []natsLog.LogMessage, err error) {
 	goods := []Good{}
 	tx, err := db.Begin()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// в два подхода блокируем нужные записи в таблице
 	stmt, err := tx.Prepare(`SELECT * FROM test_issue.goods WHERE id = $1 and project_id = $2 FOR UPDATE;`)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, nil, err
 	}
 	res, err := stmt.Exec(ID, pID)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, nil, err
 	}
 	rowsA, err := res.RowsAffected()
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, nil, err
 	}
 	if rowsA == 0 {
 		tx.Rollback()
-		return []byte(notFoundMessage), ErrNotFound
+		return []byte(notFoundMessage), nil, ErrNotFound
 	}
 	stmt, err = tx.Prepare(`SELECT * FROM test_issue.goods WHERE priority >= $1 FOR UPDATE;`)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, nil, err
 	}
 	_, err = stmt.Exec(priority)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, nil, err
 	}
 
 	stmt, err = tx.Prepare(`UPDATE test_issue.goods SET priority = priority+1 WHERE priority >= $1 returning id, priority;`)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, nil, err
 	}
 	rows, err := stmt.Query(priority)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, nil, err
 	}
 	for rows.Next() {
 		good := Good{}
 		err = rows.Scan(&good.ID, &good.Priority)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		goods = append(goods, good)
 	}
@@ -276,26 +310,33 @@ func ReprioritiizeGood(db *sql.DB, ID, pID, priority int) (payload json.RawMessa
 	stmt, err = tx.Prepare(`UPDATE test_issue.goods SET priority = $3 WHERE id = $1 and project_id = $2 returning id, priority;`)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, nil, err
 	}
 	row := stmt.QueryRow(ID, pID, priority)
 	good := Good{}
 	err = row.Scan(&good.ID, &good.Priority)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, nil, err
 	}
 	goods = append(goods, good)
 	err = tx.Commit()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	out, err := json.Marshal(ReprioritiizeResponse{Priorities: goods})
+	payload, err = json.Marshal(ReprioritiizeResponse{Priorities: goods})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return out, nil
+	for _, g := range goods {
+		logPayload = append(logPayload, natsLog.LogMessage{
+			ID:        g.ID,
+			Priority:  g.Priority,
+			EventTime: time.Now(),
+		})
+	}
+	return payload, logPayload, nil
 }
 
 // notFoundMessage сообщение если товар не найден

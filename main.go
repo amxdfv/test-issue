@@ -4,6 +4,7 @@ import (
 	"log"
 	"main/database"
 	"main/handler"
+	natsLog "main/nats"
 	"net/http"
 )
 
@@ -24,8 +25,13 @@ func main() {
 		log.Fatal(err)
 		return
 	}
+	nc, err := natsLog.GetNats(cfg.Nats)
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
 
-	r := handler.NewRestHandler(db, rdb)
+	r := handler.NewRestHandler(db, rdb, nc)
 	http.HandleFunc("/good", r.GetHandler)
 	http.HandleFunc("/good/create", r.PostHandler)
 	http.HandleFunc("/good/remove", r.DeleteHandler)
